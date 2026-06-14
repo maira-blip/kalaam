@@ -585,39 +585,58 @@ const isCJK = (code) => code === "zh";
 
 // ─── OPENROUTER API ──────────────────────────────────────────────────────────
 const OPENROUTER_API_KEY = "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";
-const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
+
+// Try the auto free-router first, then fall back to specific free models
+// if one is temporarily rate-limited/unavailable upstream.
+const OPENROUTER_MODELS = [
+  "openrouter/free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "deepseek/deepseek-chat-v3.1:free",
+  "qwen/qwen3-30b-a3b:free",
+  "google/gemini-2.0-flash-exp:free",
+];
 
 async function callClaude(system, userMsg, maxTokens=600) {
-  try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-        "HTTP-Referer": typeof window !== "undefined" ? window.location.origin : "https://kalaam.app",
-        "X-Title": "Kalaam",
-      },
-      body: JSON.stringify({
-        model: OPENROUTER_MODEL,
-        max_tokens: maxTokens,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: userMsg }
-        ]
-      })
-    });
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error("API error:", res.status, errText);
-      return null;
+  for (let i = 0; i < OPENROUTER_MODELS.length; i++) {
+    const model = OPENROUTER_MODELS[i];
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+          "HTTP-Referer": typeof window !== "undefined" ? window.location.origin : "https://kalaam.app",
+          "X-Title": "Kalaam",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: userMsg }
+          ]
+        })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(`API error (${model}):`, res.status, errText);
+        if (res.status === 429 || res.status === 404 || res.status === 503) {
+          continue;
+        }
+        return null;
+      }
+
+      const d = await res.json();
+      const text = d.choices?.[0]?.message?.content?.trim();
+      if (text) return text;
+      continue;
+    } catch (e) {
+      console.error(`Fetch error (${model}):`, e);
+      continue;
     }
-    const d = await res.json();
-    const text = d.choices?.[0]?.message?.content?.trim();
-    return text || null;
-  } catch (e) {
-    console.error("Fetch error:", e);
-    return null;
   }
+  return null;
 }
 
 // ─── TRANSLATION (LiveBridge) ─────────────────────────────────────────────────
